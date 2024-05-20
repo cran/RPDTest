@@ -9,10 +9,11 @@ rpdTest(
   p = rep(1/length(data), length(data)),
   lambda = 1,
   sim.pValue = FALSE,
-  ll = 5,
-  simNum = 30,
-  edfLen = 2500,
-  n.cores = NULL
+  B = 200,
+  z = 40,
+  rs = 1250,
+  n.cores = NULL,
+  random.state = NULL
 )
 }
 \arguments{
@@ -28,18 +29,20 @@ adjusting it will significantly change the final obtained statistic.}
 \item{sim.pValue}{a logical variable. It decides whether to compute p-values
 in Monte Carlo simulation.}
 
-\item{ll}{an integer specifying the number of outer loops of the
-Monte Carlo simulation.}
+\item{B}{an integer specifying the number of simulation data on the expected
+null distribution (p) of the Monte Carlo simulation.}
 
-\item{simNum}{an integer specifying the number of inner loops of the
-Monte Carlo simulation.}
+\item{z}{an integer specifying the number by which to divide
+the observation data group in a Monte Carlo simulation.}
 
-\item{edfLen}{an integer that adjusts the number of points used to generate
-the empirical distribution function used to perform the simulation.}
+\item{rs}{an integer that adjusts the number of statistics calculated in simulation.}
 
 \item{n.cores}{an integer used to specify the number of cores used
 to perform parallel operations. The default is to use the maximum number
 of cores available to the computer minus one.}
+
+\item{random.state}{a numeric that controls the randomness of the samples used
+when generating uniformly distributed random vector on the n-sphere.}
 }
 \value{
 standard list object with class "htest".
@@ -52,10 +55,19 @@ Accept a vector, matrix or a \link{data.frame} as observed data.
 Then obtain a specific Randomized phi-divergence statistic,
 which is computed based on a uniformly distributed random vector
 on the n-sphere. This random vector is uniquely generated at runtime.
-No definite p-value is provided at current stage.
 However, a p-values in Monte Carlo simulation is available as an option. It
-executes in parallel within a nested for loop to reduce randomness.
-In the current version (0.0.1), this feature is still being debugged and improved,
+executes in parallel way, comparing the empirical distribution function. In specific,
+it simulates data under the null hypothesis and compares it to the observed data.
+It generates B datasets based on the expected null distribution (p) and
+the observed control data (v0). For each simulated dataset and the observed
+data and v0, rs statistics are computed using different random seeds.
+The Kolmogorov-Smirnov statistic is used to compare the distributions of the simulated and
+observed data and the simulated and control data. We get B K-S statistics in both
+observed data group and control data group.
+The function then calculates a p-value based on how often the within-group mean of
+the Kolmogorov-Smirnov statistic after dividing the observed data group into z groups
+is more extreme than the mean of the statistic observed for the control vector group.
+In the current version (0.0.2), this feature is still being debugged and improved,
 so this option is not enabled by default.
 }
 \examples{

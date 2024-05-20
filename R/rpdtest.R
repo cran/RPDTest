@@ -22,6 +22,8 @@ library(foreach)
 #' It is equal to the number of experiments for the multinomial distribution.
 #' @param r an integer indicating the dimension of the data parameter.
 #' It is equal to the number of possible outcomes of the multinomial distribution.
+#' @param random.state a numeric that controls the randomness of the samples used
+#' when generating uniformly distributed random vector on the n-sphere.
 #'
 #' @return a numeric value that reflects the statistic obtained after
 #' an execution of rpdTest at that time.
@@ -34,7 +36,7 @@ library(foreach)
 #' rpdStat(d, c(1/2,1/2), nDim = sum(d), r = length(d))
 #'
 #' @importFrom stats D rnorm
-rpdStat <- function(data, probability, lambda = 1, nDim, r) {
+rpdStat <- function(data, probability, lambda = 1, nDim, r,random.state = NULL) {
   if (is.data.frame(data))
     data <- as.matrix(data)
   if (is.matrix(data)) {
@@ -43,8 +45,10 @@ rpdStat <- function(data, probability, lambda = 1, nDim, r) {
     else
       stop("wrong data shape")
   }
+  set.seed(random.state)
   Dnormal <- rnorm(nDim)
   Duniform <- Dnormal / sqrt(sum(Dnormal ^ 2))
+  set.seed(NULL)
   phiF <- function(u, l = lambda) {
     if (l == 0) {
       return(u * log(u) - u + 1)
@@ -57,25 +61,18 @@ rpdStat <- function(data, probability, lambda = 1, nDim, r) {
     }
   }
 
-  #Extensive use of apply family functions to cancel for loops
-  eta <- diag(r)
-  rStart <- cumsum(c(1, data[-length(data)]))
-  rEnd <- cumsum(data)
-  # Convert Duniform[rStart:rEnd] to a list
-  Duniform_list <-
-    lapply(1:r, function(i)
-      Duniform[rStart[i]:rEnd[i]])
-  # Convert eta[i,] - probability to a list
-  eta_prob_list <- lapply(1:r, function(i)
-    eta[i,] - probability)
-  componentFun <- function(x, y)
-    colSums(outer(x, y))
-  # Use lapply function to calculate XTheta separately and add them up
-  XTheta <-
-    Reduce(`+`, lapply(1:r, function(i)
-      componentFun(Duniform_list[[i]], eta_prob_list[[i]])))
-
-
+  startIndex <- 1
+  eta <- matrix(0, nrow = nDim, ncol = r)
+  for (i in 1:r) {
+    if(data[i] == 0){
+      startIndex <- startIndex + data[i]
+      next
+    }
+    # Create one-hot encoded vector for each element in data
+    eta[startIndex:(startIndex + data[i] - 1), i] <- 1
+    startIndex <- startIndex + data[i]
+  }
+  XTheta <- c(Duniform %*% (eta - probability))
   if (lambda == 0) {
     DDPhiF <-
       D(D(expression(u * log(u) - u + 1) ,   "u"),   "u")
@@ -104,6 +101,7 @@ rpdStat <- function(data, probability, lambda = 1, nDim, r) {
 #' This is one of the auxiliary functions used to execute the rpdTest function.
 #' This function can be used to calculate p-values based on Monte Carlo simulation.
 #' Users generally do not need to call this function except for testing purposes.
+#' For more detailed description one can find in\link{rpdTest}.
 #'
 #' @param x the obtained multinomial distribution data.Same data structure
 #' as the data parameter in \link{rpdTest}.
@@ -111,12 +109,11 @@ rpdStat <- function(data, probability, lambda = 1, nDim, r) {
 #' ensure beforehand that the vectors are valid.
 #' @param lambda  a control parameter of the statistic calculation,
 #' adjusting it will significantly change the final obtained statistic.
-#' @param ll  an integer specifying the number of outer loops of the
-#' Monte Carlo simulation.
-#' @param simNum  an integer specifying the number of inner loops of the
-#' Monte Carlo simulation.
-#' @param edfLen  an integer that adjusts the number of points used to generate
-#' the empirical distribution function used to perform the simulation.
+#' @param B an integer specifying the number of simulation data on the expected
+#' null distribution (p) of the Monte Carlo simulation.
+#' @param z an integer specifying the number by which to divide
+#' the observation data group in a Monte Carlo simulation.
+#' @param rs an integer that adjusts the number of statistics calculated in simulation.
 #' @param n.cores  an integer used to specify the number of cores used
 #' to perform parallel operations. The default is to use the maximum number
 #' of cores available to the computer minus one.
@@ -134,18 +131,11 @@ rpdStat <- function(data, probability, lambda = 1, nDim, r) {
 #' #The next line is equivalent to rpdTest(d,sim.pValue = TRUE,n.cores = 2)$p.value
 #' #It usually takes 1-2 minutes to perform this calculation process
 #' \donttest{
-#' pVals(d, c(1/2,1/2), ll = 5, simNum =  30, edfLen = 2500, n.cores = 2, nDim = sum(d), r = length(d))
+#' pVals(d, c(1/2,1/2), B = 200, z = 40, rs = 1250, n.cores = 2, nDim = sum(d), r = length(d))
 #' }
-#' @importFrom stats ecdf pchisq rmultinom
-pVals <- function(x,
-                  p,
-                  lambda = 1,
-                  ll,
-                  simNum,
-                  edfLen,
-                  n.cores,
-                  nDim,
-                  r) {
+#' @importFrom stats ecdf pchisq rmultinom ks.test
+pVals <- function(x, p, lambda = 1, B = 200, z = 40, rs = 1250,
+                  n.cores, nDim, r) {
   if (is.data.frame(x))
     x <- as.matrix(x)
   if (is.matrix(x)) {
@@ -154,6 +144,11 @@ pVals <- function(x,
     else
       stop("wrong data shape")
   }
+
+  multd0 <- rmultinom(1,nDim,p)
+  multd <- rmultinom(B,nDim,p)
+
+  # set core number
   if (is.null(n.cores)) {
     n.cores <- detectCores()
     cluster <- makeCluster(n.cores - 1)
@@ -161,44 +156,39 @@ pVals <- function(x,
   else{
     cluster <- makeCluster(n.cores)
   }
-
-  registerDoParallel(cl = cluster)
+  registerDoParallel(cluster)
   getDoParRegistered()
-  #aveP <- vector("numeric", ll*simNum)
-  intv <- seq(0, 10, length = 5000)
-  pdf <- pchisq(intv, df = r - 1)
-  bV <-  rmultinom(ll,nDim, p)
-  l <- numeric()
-  aveP <- foreach(l = 1:ll, .combine = "cbind")%:%
-    foreach(
-      k = 1:simNum,
-      .combine = "c",
-      .packages = c("RPDTest"),
-      .errorhandling = "pass"
-    )%dopar%{
-      rpdStat1 <- sapply(1:edfLen,function(i) rpdStat(bV[,l],p,lambda,nDim,r))
-      rpdStat2 <- sapply(1:edfLen,function(i) rpdStat(x,p,lambda,nDim,r))
-      edf1 <- ecdf(rpdStat1)
-      edf2 <- ecdf(rpdStat2)
-      d.1 <- abs(edf1(intv)-pdf)
-      d.2 <- abs(edf2(intv)-pdf)
-      (sum(abs(d.1 - d.2) < 0.001) + 1) / (edfLen + 1) > 0.5
-    }
-  if(ll == 1){
-    return ((sum(aveP)+1)/(length(aveP) + 1))
+  # initialize vector
+  pv <- rep(NA, B)
+  pv2 <- rep(NA, B)
+  kl <- 0
+  results <- foreach (kl = 1:200,.packages = c("RPDTest")) %dopar% {
+    stat <- sapply(1:rs, function(i) rpdTest(multd0, p, lambda, random.state = i)$statistic)
+    stat2 <- sapply(1:rs, function(i) rpdTest(multd[, kl], p, lambda, random.state = i)$statistic)
+    stat3 <- sapply(1:rs, function(i) rpdTest(x, p, lambda, random.state = i)$statistic)
+    list(pv = ks.test(stat, stat2)$statistic, pv2 = ks.test(stat3, stat2)$statistic)
   }
-  else{
-    aveP <- (colSums(aveP)+1)/(nrow(aveP) + 1)
-  }
-  stopCluster(cl = cluster)
+
+  # summarize result
+  pv <- sapply(results, function(x) x$pv)
+  pv2 <- sapply(results, function(x) x$pv2)
+
+  stopCluster(cluster)
   stopImplicitCluster()
-  if(ll>=5){
-  (sum(aveP)-max(aveP)-min(aveP))/(ll-2)
-  }
-  else{
-    sum(aveP)/ll
-  }
-  #median?
+
+  splitVec <- split(pv, cut(seq_len(length(pv)), z, equal = FALSE))
+
+  # Calculate the mean of each part
+  mean0 <- lapply(splitVec, mean)
+
+  benchmark <- mean(unlist(mean0))
+
+  splitVec2 <- split(pv2, cut(seq_len(length(pv2)), z, equal = FALSE))
+
+  # Calculate the mean of each part
+  meanValues <- lapply(splitVec2, mean)
+
+  (sum(meanValues <= benchmark) + 1)/ (z + 1)
 }
 
 
@@ -211,10 +201,19 @@ pVals <- function(x,
 #' Then obtain a specific Randomized phi-divergence statistic,
 #' which is computed based on a uniformly distributed random vector
 #' on the n-sphere. This random vector is uniquely generated at runtime.
-#' No definite p-value is provided at current stage.
 #' However, a p-values in Monte Carlo simulation is available as an option. It
-#' executes in parallel within a nested for loop to reduce randomness.
-#' In the current version (0.0.1), this feature is still being debugged and improved,
+#' executes in parallel way, comparing the empirical distribution function. In specific,
+#' it simulates data under the null hypothesis and compares it to the observed data.
+#' It generates B datasets based on the expected null distribution (p) and
+#' the observed control data (v0). For each simulated dataset and the observed
+#' data and v0, rs statistics are computed using different random seeds.
+#' The Kolmogorov-Smirnov statistic is used to compare the distributions of the simulated and
+#' observed data and the simulated and control data. We get B K-S statistics in both
+#' observed data group and control data group.
+#' The function then calculates a p-value based on how often the within-group mean of
+#' the Kolmogorov-Smirnov statistic after dividing the observed data group into z groups
+#' is more extreme than the mean of the statistic observed for the control vector group.
+#' In the current version (0.0.2), this feature is still being debugged and improved,
 #' so this option is not enabled by default.
 #'
 #' @param data a one-dimensional vector or matrix of this shape (data.frame)
@@ -225,15 +224,16 @@ pVals <- function(x,
 #' adjusting it will significantly change the final obtained statistic.
 #' @param sim.pValue a logical variable. It decides whether to compute p-values
 #' in Monte Carlo simulation.
-#' @param ll an integer specifying the number of outer loops of the
-#' Monte Carlo simulation.
-#' @param simNum an integer specifying the number of inner loops of the
-#' Monte Carlo simulation.
-#' @param edfLen an integer that adjusts the number of points used to generate
-#' the empirical distribution function used to perform the simulation.
+#' @param B an integer specifying the number of simulation data on the expected
+#' null distribution (p) of the Monte Carlo simulation.
+#' @param z an integer specifying the number by which to divide
+#' the observation data group in a Monte Carlo simulation.
+#' @param rs an integer that adjusts the number of statistics calculated in simulation.
 #' @param n.cores an integer used to specify the number of cores used
 #' to perform parallel operations. The default is to use the maximum number
 #' of cores available to the computer minus one.
+#' @param random.state a numeric that controls the randomness of the samples used
+#' when generating uniformly distributed random vector on the n-sphere.
 #' @return standard list object with class "htest".
 #' @export
 #'
@@ -254,13 +254,10 @@ rpdTest <-
            p = rep(1 / length(data), length(data)),
            lambda = 1,
            sim.pValue = FALSE,
-           ll = 5,
-           simNum = 30,
-           edfLen = 2500,
-           n.cores = NULL) {
+           B = 200, z = 40, rs = 1250, n.cores = NULL, random.state = NULL) {
 
     if (0 %in% p)
-      stop("invalid 'p(probability)'")
+      warning("invalid 'p(probability)', statistic = NaN")
     if (length(data) == 1L)
       stop("'data' must at least have 2 elements")
     if (length(data) != length(p))
@@ -279,17 +276,17 @@ rpdTest <-
         stop("wrong data shape")
     }
 
-    METHOD <- paste("Goodness-of-fit test using Randomized phi-divergence test statistics with parameter lambda = ",lambda,":")
+    METHOD <- paste("Goodness-of-fit test using Randomized phi-divergence test statistics with parameter lambda = ",lambda)
     nDim <- sum(data)
     r <- length(data)
     PARAMETER <- r - 1
-    STAT <- rpdStat(data, p, lambda, nDim, r)
+    STAT <- rpdStat(data, p, lambda, nDim, r,random.state)
     names(STAT) <- "Random phi-divergence"
-    names(PARAMETER) <- "corresponding chisq df"
+    names(PARAMETER) <- "chisq df"
     PVAL <- NULL
     if (sim.pValue) {
-      METHOD <- paste(METHOD,"total",ll,"*",simNum,"simulations")
-      PVAL <- pVals(data, p, lambda, ll, simNum, edfLen, n.cores, nDim, r)
+      METHOD <- paste(METHOD," with simulated p-value (based on ",B," simulations and ",rs ," replicates)")
+      PVAL <- pVals(data, p, lambda, B, z, rs, n.cores, nDim, r)
     }
     result <- structure(
       list(

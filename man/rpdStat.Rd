@@ -4,7 +4,7 @@
 \alias{rpdStat}
 \title{Randomized phi-divergence test: statistic part}
 \usage{
-rpdStat(data, probability, lambda = 1, nDim, r)
+rpdStat(data, probability, lambda = 1, nDim, r, random.state = NULL)
 }
 \arguments{
 \item{data}{the same data structure that provided in \link{rpdTest}.}
@@ -19,6 +19,9 @@ It is equal to the number of experiments for the multinomial distribution.}
 
 \item{r}{an integer indicating the dimension of the data parameter.
 It is equal to the number of possible outcomes of the multinomial distribution.}
+
+\item{random.state}{a numeric that controls the randomness of the samples used
+when generating uniformly distributed random vector on the n-sphere.}
 }
 \value{
 a numeric value that reflects the statistic obtained after

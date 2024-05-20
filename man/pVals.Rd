@@ -4,7 +4,7 @@
 \alias{pVals}
 \title{Randomized phi-divergence test: simulated p-value part}
 \usage{
-pVals(x, p, lambda = 1, ll, simNum, edfLen, n.cores, nDim, r)
+pVals(x, p, lambda = 1, B = 200, z = 40, rs = 1250, n.cores, nDim, r)
 }
 \arguments{
 \item{x}{the obtained multinomial distribution data.Same data structure
@@ -16,14 +16,13 @@ ensure beforehand that the vectors are valid.}
 \item{lambda}{a control parameter of the statistic calculation,
 adjusting it will significantly change the final obtained statistic.}
 
-\item{ll}{an integer specifying the number of outer loops of the
-Monte Carlo simulation.}
+\item{B}{an integer specifying the number of simulation data on the expected
+null distribution (p) of the Monte Carlo simulation.}
 
-\item{simNum}{an integer specifying the number of inner loops of the
-Monte Carlo simulation.}
+\item{z}{an integer specifying the number by which to divide
+the observation data group in a Monte Carlo simulation.}
 
-\item{edfLen}{an integer that adjusts the number of points used to generate
-the empirical distribution function used to perform the simulation.}
+\item{rs}{an integer that adjusts the number of statistics calculated in simulation.}
 
 \item{n.cores}{an integer used to specify the number of cores used
 to perform parallel operations. The default is to use the maximum number
@@ -43,12 +42,13 @@ an numeric value indicating simulated p-value.
 This is one of the auxiliary functions used to execute the rpdTest function.
 This function can be used to calculate p-values based on Monte Carlo simulation.
 Users generally do not need to call this function except for testing purposes.
+For more detailed description one can find in\link{rpdTest}.
 }
 \examples{
 d <- c(20,40)
 #The next line is equivalent to rpdTest(d,sim.pValue = TRUE,n.cores = 2)$p.value
 #It usually takes 1-2 minutes to perform this calculation process
 \donttest{
-pVals(d, c(1/2,1/2), ll = 5, simNum =  30, edfLen = 2500, n.cores = 2, nDim = sum(d), r = length(d))
+pVals(d, c(1/2,1/2), B = 200, z = 40, rs = 1250, n.cores = 2, nDim = sum(d), r = length(d))
 }
 }
